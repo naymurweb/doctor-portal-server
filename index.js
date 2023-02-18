@@ -11,6 +11,9 @@ const port = process.env.PORT || 7000;
 require("dotenv").config();
 const jwt = require("jsonwebtoken");
 
+// This is your test secret API key.
+const stripe = require("stripe")(process.env.SECRET_KEY);
+
 // middleware
 app.use(cors());
 app.use(express.json());
@@ -50,6 +53,9 @@ const run = async () => {
 
     const usersCollection = client.db("doctor-portal").collection("users");
     const doctorsCollection = client.db("doctor-portal").collection("doctors");
+    const paymentsCollection = client
+      .db("doctor-portal")
+      .collection("payments");
 
     const verifyAdmin = async (req, res, next) => {
       const decodedEmail = req.decoded.email;
@@ -88,6 +94,53 @@ const run = async () => {
       res.send(options);
     });
 
+    // payment =================================================
+
+    app.post("/create-payment-intent", async (req, res) => {
+      const booking = req.body;
+      const price = booking.price;
+      const amount = price * 10;
+      const paymentIntent = await stripe.paymentIntents.create({
+        currency: "usd",
+        amount: amount,
+        payment_method_types: ["card"],
+      });
+
+      res.send({
+        clientSecret: paymentIntent.client_secret,
+      });
+    });
+
+    app.post("/payment", async (req, res) => {
+      const payment = req.body;
+      console.log(payment);
+      const result = await paymentsCollection.insertOne(payment);
+      const id = payment.bookingId;
+      const filter = { _id: new ObjectId(id) };
+      const updateDoc = {
+        $set: {
+          paid: true,
+          transactionId: payment.transactionId,
+        },
+      };
+      const updateResult = await bookingsCollection.updateOne(
+        filter,
+        updateDoc
+      );
+      res.send(result);
+    });
+    // app.get ('/addPrice',async(req,res)=>{
+    //   const filter={}
+    //   const options={upsert:true}
+    //   const updateDoc={
+    //     $set:{
+    //       price:180
+    //     }
+    //   }
+    //   const result=await appointmentOptionsCollection.updateMany(filter,updateDoc,options)
+    //   res.send(result)
+    // })
+
     app.get("/bookings", verifyJWT, async (req, res) => {
       const email = req.query.email;
       const decodedEmail = req.decoded.email;
@@ -99,9 +152,15 @@ const run = async () => {
       res.send(bookings);
     });
 
+    app.get("/bookings/:id", async (req, res) => {
+      const id = req.params.id;
+      const query = { _id: new ObjectId(id) };
+      const result = await bookingsCollection.findOne(query);
+      res.send(result);
+    });
+
     app.post("/bookings", async (req, res) => {
       const booking = req.body;
-      console.log(booking);
       const query = {
         appointmentDate: booking.appointmentDate,
         email: booking.email,
